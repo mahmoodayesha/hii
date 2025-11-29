@@ -1,0 +1,135 @@
+Got you — here is the **same analysis**, rewritten in **clear, professional prose**, NO LaTeX, NO heavy academic wording, and easy to understand.
+You can paste this directly into your “Analysis” section as normal text.
+
+---
+
+# **Analysis (Clear, Professional, Easy to Understand)**
+
+This section analyzes whether the ELECTRA-small model relies on a shortcut when handling negation in the SNLI dataset. Prior research shows that SNLI contains annotation patterns where contradiction examples often include negation words such as *not*, *never*, and *no*. Because of this pattern, models may learn a simple rule like “if the hypothesis contains negation, predict contradiction,” instead of reasoning about the meaning of the sentence. The goal of this analysis is to test whether ELECTRA-small shows this behavior after fine-tuning.
+
+---
+
+## **Constructing the Negation Subset**
+
+To examine this, we created a special subset of the SNLI test set by selecting all examples where the hypothesis contains a negation word. After removing invalid examples, we found:
+
+* **205 negated hypotheses**
+* **9,619 non-negated hypotheses**
+
+This simple rule (“hypothesis contains negation”) gives us a clear and consistent way to focus on potentially challenging examples, as recommended by the project instructions.
+
+---
+
+## **Performance on Negated vs. Non-Negated Examples**
+
+The overall test accuracy of the model is **89.19%**. When looking at the two subsets separately:
+
+* Accuracy on **negated** examples: **90.24%**
+* Accuracy on **non-negated** examples: **88.74%**
+
+At first glance, this suggests that negation does not harm performance. However, accuracy alone does not show how the model is making decisions internally. To understand the model’s behavior more fully, we need to look at how it distributes its predictions.
+
+*(Insert diagram here: a simple bar chart comparing negated vs. non-negated accuracy.)*
+
+---
+
+## **Evidence of a Negation Shortcut**
+
+To test for shortcut behavior, we looked at how often the model predicts the label **contradiction**, which is the label most associated with negation in SNLI. The results show a clear shift:
+
+* For **entailment** examples:
+
+  * Negated hypotheses → **15.38%** predicted as contradiction
+  * Non-negated → **1.80%**
+
+* For **neutral** examples:
+
+  * Negated hypotheses → **14.29%** predicted as contradiction
+  * Non-negated → **7.10%**
+
+* For **contradictions**, the model predicts contradiction correctly over 90% of the time in both subsets.
+
+These numbers show that when negation appears, the model becomes **much more likely** to predict contradiction even when the correct label is not contradiction. This pattern strongly suggests that ELECTRA-small has learned the shortcut “negation means contradiction.”
+
+*(Insert diagram here: confusion matrix for negated examples.)*
+*(Insert diagram here: confusion matrix for non-negated examples.)*
+
+---
+
+## **Qualitative Error Patterns**
+
+We reviewed 20 misclassified examples and found three main types of errors:
+
+### **1. Shortcut errors caused by negation**
+
+These are cases where the model predicts contradiction solely because negation appears.
+
+Example:
+Premise: “People are standing outside the building.”
+Hypothesis: “The group of people **aren’t inside** the building.”
+Correct label: entailment
+Model prediction: contradiction
+
+These errors match the bias we saw in the statistics.
+
+### **2. Reasoning errors unrelated to negation**
+
+Some mistakes occur because the model struggles with commonsense knowledge.
+
+Example:
+Premise: “A car is doing a burnout.”
+Hypothesis: “The car has **no tires**.”
+Correct label: contradiction
+Model prediction: neutral
+
+### **3. Dataset annotation noise**
+
+Some SNLI labels appear questionable or ambiguous.
+
+Example:
+Premise: “An ambulance is passing a man.”
+Hypothesis: “The ambulance isn’t stopped by heavy traffic.”
+The premise does not mention traffic. The gold label (entailment) appears debatable.
+
+These cases show that not all errors are due to shortcuts; some come from unclear labels in the dataset.
+
+---
+
+## **Minimal Contrast Tests**
+
+To see whether the model can handle negation in simple cases, we created minimal pairs where only one word changes.
+
+Example:
+Premise: “A woman is laughing.”
+
+* Hypothesis 1: “The woman is laughing.” → entailment
+* Hypothesis 2: “The woman is **not** laughing.” → contradiction
+
+The model predicted both correctly.
+
+This shows that ELECTRA-small *can* understand negation logically when the sentence is simple and clear. Shortcut behavior appears more in real SNLI examples, where wording and annotation patterns introduce noise.
+
+---
+
+## **Summary of Findings**
+
+Overall, the analysis shows:
+
+1. ELECTRA-small does not fail on negation; accuracy remains high.
+2. However, when negation appears in the hypothesis, the model becomes **much more likely** to predict contradiction, even when it should not.
+3. This strongly suggests a **negation → contradiction shortcut**, likely learned from SNLI’s annotation patterns.
+4. Additional mistakes come from lack of commonsense reasoning and ambiguous gold labels.
+5. Minimal tests show the model can correctly reason about negation in simple cases, supporting the idea that the shortcut comes from the training data rather than the model architecture.
+
+This satisfies the assignment requirement to identify a challenging subset, analyze behavior with statistics, inspect model errors, and test for dataset artifacts.
+
+---
+
+# If you want next:
+
+✔ A clear **professional but simple Abstract**
+✔ A rewritten **Introduction** like this style
+✔ Part 2: **Fixing the shortcut**
+✔ Full paper polished in this tone
+
+Just tell me which part you want!

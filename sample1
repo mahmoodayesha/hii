@@ -1,52 +1,72 @@
-Total misclassified (negated subset): 20
+from datasets import load_dataset
+import re
 
-Premise:  Many people standing outside of a place talking to each other in front of a building that has a sign that says "HI-POINTE."
-Hypothesis:  The group of people aren't inide of the building.
-True label:  0
-Predicted label:  2
---------------------------------------------------
-Premise:  a boy in a red hooded top is smiling whilst looking away from his reflection.
-Hypothesis:  The boy doesn't want to see his reflection.
-True label:  1
-Predicted label:  0
---------------------------------------------------
-Premise:  A very dirty race car doing a burnout on some dirt.
-Hypothesis:  A car that has no tires.
-True label:  2
-Predicted label:  1
---------------------------------------------------
-Premise:  An Ambulance is passing a man wearing a bandanna and girl.
-Hypothesis:  The ambulance isn't stopped by heavy traffic
-True label:  0
-Predicted label:  1
---------------------------------------------------
-Premise:  A fighter jet plane is landed outside Notre Dame cathedral at night.
-Hypothesis:  The fighter plane has no one inside of it.
-True label:  1
-Predicted label:  2
---------------------------------------------------
-Premise:  The young boy in a red shirt and jeans resists his sister's request for water on the road.
-Hypothesis:  Kids don't share water.
-True label:  0
-Predicted label:  2
---------------------------------------------------
-Premise:  A cheerful boy rides a makeshift sled down a snowy hill.
-Hypothesis:  Don't stock up and have fun with the sled
-True label:  2
-Predicted label:  1
---------------------------------------------------
-Premise:  An Asian woman dressed in a colorful outfit laughing.
-Hypothesis:  The woman is not laughing.
-True label:  0
-Predicted label:  2
---------------------------------------------------
-Premise:  A bald, black man wearing safety glasses and a long-sleeved black shirt is using a pick and hammer to sculpt a sizable rock into art.
-Hypothesis:  A black man with no hair is wearing his safety glasses around his neck.
-True label:  1
-Predicted label:  0
---------------------------------------------------
-Premise:  There is a man poking a long stick up towards the ceiling.
-Hypothesis:  The man has no arms.
-True label:  1
-Predicted label:  2
---------------------------------------------------
+snli = load_dataset("snli")
+
+train_set = snli["train"]
+train_set = train_set.filter(lambda x: x["label"] != -1)
+
+negation_words = [
+    "not","never","no","none","nothing","is not","are not","was not",
+    "were not","does not","do not","did not","has not","have not","had not",
+    "cannot","will not","won't","can't","don't","didn't","isn't","aren't"
+]
+
+def has_neg(x):
+    hyp = x.lower()
+    for w in negation_words:
+        if re.search(rf"\b{re.escape(w)}\b", hyp):
+            return True
+    return False
+
+negated_train = train_set.filter(lambda x: has_neg(x["hypothesis"]))
+
+print("Total negated TRAIN examples:", len(negated_train))
+
+
+
+-------
+neg_sample = negated_train.shuffle(seed=42).select(range(300))
+normal_sample = train_set.shuffle(seed=42).select(range(1000))
+
+augmented_train = neg_sample.add_batch(normal_sample)
+print("Augmented training size:", len(augmented_train))
+
+
+
+-0----=
+
+
+
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, Trainer, TrainingArguments
+
+model_path = "./trained_model/"
+tokenizer = AutoTokenizer.from_pretrained(model_path)
+model = AutoModelForSequenceClassification.from_pretrained(model_path)
+
+def tokenize_fn(batch):
+    return tokenizer(batch["premise"], batch["hypothesis"],
+                     truncation=True, padding="max_length", max_length=128)
+
+tokenized_aug = augmented_train.map(tokenize_fn, batched=True)
+
+training_args = TrainingArguments(
+    output_dir="./trained_model_neg_aug",
+    num_train_epochs=1,              # Only 1 epoch to avoid overfitting
+    per_device_train_batch_size=8,
+    learning_rate=1e-5,              # SMALL LR = better generalization
+    weight_decay=0.01,
+    logging_steps=50
+)
+
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    train_dataset=tokenized_aug,
+)
+
+trainer.train()
+
+trainer.save_model("./trained_model_neg_aug")
+tokenizer.save_pretrained("./trained_model_neg_aug")
+

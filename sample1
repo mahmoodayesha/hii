@@ -1,55 +1,200 @@
-from google.colab import drive
-drive.mount('/content/drive')
+# -----------------------------
+# Part 2: Fixing the negation shortcut
+# Adversarial / contrast negation augmentation
+# -----------------------------
 
-!unzip "/content/drive/MyDrive/fp-dataset-artifacts-main (1).zip" -d "/content/drive/MyDrive/"
+from datasets import Dataset
 
-# Commented out IPython magic to ensure Python compatibility.
-# %cd "/content/drive/MyDrive/fp-dataset-artifacts-main"
+# We create a small set of hand-crafted contrast examples.
+# Label mapping: 0 = entailment, 1 = neutral, 2 = contradiction
 
-!pip install accelerate datasets torch tqdm evaluate
+contrast_premises = [
+    "A woman is laughing.",
+    "A man is riding a bike.",
+    "A child is eating pizza.",
+    "A dog is sleeping on the couch.",
+    "Two people are talking in a room.",
+    "A person is running in the park.",
+    "A man is holding a cup of coffee.",
+    "A girl is reading a book.",
+    "A group of people are inside the building.",
+    "A boy is playing soccer outside."
+]
 
-!python3 run.py --do_train --task nli --dataset snli --output_dir ./trained_model/
+contrast_hypotheses = [
+    # 1: negation flips truth -> contradiction
+    "The woman is laughing.",             # entailment
+    "The woman is not laughing.",         # contradiction
+
+    # 2: non-exclusive negation -> neutral (both can be true)
+    "The man is riding a bike.",          # entailment
+    "The man is not sleeping.",           # neutral
+
+    # 3: classic flip
+    "The child is eating pizza.",         # entailment
+    "The child is not eating pizza.",     # contradiction
+
+    # 4: classic flip
+    "The dog is sleeping on the couch.",  # entailment
+    "The dog is not sleeping on the couch.", # contradiction
+
+    # 5: negation about different action -> neutral
+    "Two people are talking in a room.",  # entailment
+    "The two people are not shouting.",   # neutral
+
+    # 6: classic flip
+    "A person is running in the park.",   # entailment
+    "The person is not running in the park.", # contradiction
+
+    # 7: classic flip
+    "The man is holding a cup of coffee.", # entailment
+    "The man is not holding a cup of coffee.", # contradiction
+
+    # 8: neutral with negation (extra fact)
+    "A girl is reading a book.",          # entailment
+    "The girl is not watching TV.",       # neutral
+
+    # 9: classic flip
+    "A group of people are inside the building.", # entailment
+    "The people are not outside the building.",   # contradiction
+
+    # 10: classic flip
+    "A boy is playing soccer outside.",  # entailment
+    "The boy is not playing soccer outside.", # contradiction
+]
+
+contrast_labels = [
+    0,  # woman laughing -> entailment
+    2,  # woman not laughing -> contradiction
+
+    0,  # man riding bike -> entailment
+    1,  # man not sleeping -> neutral
+
+    0,  # child eating pizza -> entailment
+    2,  # child not eating pizza -> contradiction
+
+    0,  # dog sleeping -> entailment
+    2,  # dog not sleeping -> contradiction
+
+    0,  # people talking -> entailment
+    1,  # people are not shouting -> neutral
+
+    0,  # person running -> entailment
+    2,  # person not running -> contradiction
+
+    0,  # man holding coffee -> entailment
+    2,  # man not holding coffee -> contradiction
+
+    0,  # girl reading -> entailment
+    1,  # girl is not watching TV -> neutral
+
+    0,  # people inside -> entailment
+    2,  # people not outside -> contradiction
+
+    0,  # boy playing soccer outside -> entailment
+    2,  # boy not playing soccer outside -> contradiction
+]
+
+# Align premises with hypotheses: each pair uses the same premise twice
+expanded_premises = []
+for i, prem in enumerate(contrast_premises):
+    if i in [0,1,2,3,4,5,6,7,8,9]:
+        # each premise corresponds to 2 hypotheses in contrast_hypotheses
+        expanded_premises.append(prem)
+        expanded_premises.append(prem)
+
+len(expanded_premises), len(contrast_hypotheses), len(contrast_labels)
 
 
 
-!python3 run.py --do_eval --task nli --dataset snli --model ./trained_model/ --output_dir ./eval_output/
 
-!pip install transformers datasets scikit-learn seaborn -q
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, TrainingArguments, Trainer
 
-import torch
+model_path = "./trained_model/"  # your already trained SNLI model
+tokenizer = AutoTokenizer.from_pretrained(model_path)
+model = AutoModelForSequenceClassification.from_pretrained(model_path)
+
+def tokenize_fn(batch):
+    return tokenizer(batch["premise"], batch["hypothesis"],
+                     truncation=True, padding="max_length", max_length=128)
+
+tokenized_contrast = contrast_dataset.map(tokenize_fn, batched=True)
+
+tokenized_contrast = tokenized_contrast.train_test_split(test_size=0.2, seed=42)
+contrast_train = tokenized_contrast["train"]
+contrast_eval = tokenized_contrast["test"]
+
+print("Train size:", len(contrast_train))
+print("Eval size:", len(contrast_eval))
+
+
+training_args = TrainingArguments(
+    output_dir="./trained_model_negation_fixed",
+    learning_rate=5e-5,
+    per_device_train_batch_size=8,
+    per_device_eval_batch_size=8,
+    num_train_epochs=10,   # small dataset, can do more epochs
+    weight_decay=0.01,
+    evaluation_strategy="epoch",
+    save_strategy="epoch",
+    logging_steps=10,
+    load_best_model_at_end=True,
+    metric_for_best_model="accuracy"
+)
+
+from sklearn.metrics import accuracy_score, f1_score
+import numpy as np
+
+def compute_metrics(eval_pred):
+    logits, labels = eval_pred
+    preds = np.argmax(logits, axis=-1)
+    acc = accuracy_score(labels, preds)
+    return {"accuracy": acc}
+
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    train_dataset=contrast_train,
+    eval_dataset=contrast_eval,
+    tokenizer=tokenizer,
+    compute_metrics=compute_metrics,
+)
+
+trainer.train()
+
+# Save the updated model
+trainer.save_model("./trained_model_negation_fixed")
+tokenizer.save_pretrained("./trained_model_negation_fixed")
+
+print("Saved updated model to ./trained_model_negation_fixed")
+=======
+
+
+
+# -----------------------------
+# Re-run negation analysis with the updated model
+# -----------------------------
 from datasets import load_dataset
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
+import numpy as np
 from sklearn.metrics import accuracy_score, confusion_matrix
-import matplotlib.pyplot as plt
-import seaborn as sns
-import pandas as pd
 
 snli = load_dataset("snli")
-test_set = snli['test']
+test_set = snli["test"]
+test_set = test_set.filter(lambda x: x["label"] != -1)
 
-test_set = test_set.filter(lambda x: x['label'] != -1)
-
-print("Total examples after filtering out invalid:", len(test_set))
-
-import re
+# same has_negation function you used before
 negation_words = [
-    # Adverbs/particles
     "not", "never", "no", "none", "nothing",
-
-    # Negative auxiliary verbs (full forms)
     "is not", "are not", "was not", "were not",
     "does not", "do not", "did not",
     "has not", "have not", "had not",
     "cannot", "will not", "would not",
     "should not", "could not",
-
-    # Negative auxiliary verbs (contractions)
     "isn't", "aren't", "wasn't", "weren't",
     "doesn't", "don't", "didn't",
     "hasn't", "haven't", "hadn't",
     "can't", "won't", "wouldn't", "shouldn't", "couldn't",
-
-    # Negative pronouns
     "nobody", "no one", "neither", "nowhere", "none of"
 ]
 
@@ -57,160 +202,76 @@ import re
 
 def has_negation(hypothesis):
     hyp = hypothesis.lower()
-    # check each negation word as a whole word
     for neg in negation_words:
-        # \b ensures it matches only as a whole word
-        if re.search(rf'\b{re.escape(neg)}\b', hyp):
+        if re.search(rf"\b{re.escape(neg)}\b", hyp):
             return True
     return False
 
-negated_subset = test_set.filter(lambda x: has_negation(x['hypothesis']))
-print(f"Total naturally negated hypotheses: {len(negated_subset)}")
+negated_subset = test_set.filter(lambda x: has_negation(x["hypothesis"]))
+non_negated_subset = test_set.filter(lambda x: not has_negation(x["hypothesis"]))
 
-non_negated_subset = test_set.filter(lambda x: not has_negation(x['hypothesis']))
-print(f"Total non-negated hypotheses: {len(non_negated_subset)}")
+print("Negated examples:", len(negated_subset))
+print("Non-negated examples:", len(non_negated_subset))
 
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
-import torch
+# Load the updated model
+new_model_path = "./trained_model_negation_fixed"
+tokenizer_new = AutoTokenizer.from_pretrained(new_model_path)
+model_new = AutoModelForSequenceClassification.from_pretrained(new_model_path)
+model_new.to(device)
+model_new.eval()
 
-model_path = "./trained_model/"
-tokenizer = AutoTokenizer.from_pretrained(model_path)
-model = AutoModelForSequenceClassification.from_pretrained(model_path)
-
-device = "cuda" if torch.cuda.is_available() else "cpu"
-model.to(device)
-model.eval()
-
-print("num_labels:", model.config.num_labels)
-
-def predict_label(premise, hypothesis):
-    inputs = tokenizer(premise, hypothesis, return_tensors="pt", truncation=True, padding=True).to(device)
+def predict_label_new(premise, hypothesis):
+    inputs = tokenizer_new(premise, hypothesis, return_tensors="pt",
+                           truncation=True, padding=True).to(device)
     with torch.no_grad():
-        logits = model(**inputs).logits
+        logits = model_new(**inputs).logits
     return torch.argmax(logits, dim=-1).item()
 
-# =========================
-# 5. Evaluate on NEGATED subset
-# =========================
-import numpy as np
-
+# Evaluate on negated subset
 y_true_neg = []
 y_pred_neg = []
-
 for row in negated_subset:
     y_true_neg.append(row["label"])
-    y_pred_neg.append(predict_label(row["premise"], row["hypothesis"]))
+    y_pred_neg.append(predict_label_new(row["premise"], row["hypothesis"]))
 
 y_true_neg = np.array(y_true_neg)
 y_pred_neg = np.array(y_pred_neg)
 
-acc_negated = accuracy_score(y_true_neg, y_pred_neg)
-cm_negated = confusion_matrix(y_true_neg, y_pred_neg, labels=[0, 1, 2])
+acc_negated_new = accuracy_score(y_true_neg, y_pred_neg)
+cm_negated_new = confusion_matrix(y_true_neg, y_pred_neg, labels=[0,1,2])
 
-print("Accuracy on naturally negated hypotheses:", acc_negated)
-print("Confusion matrix (rows=true, cols=pred) for negated subset:\n", cm_negated)
+print("NEW Accuracy on negated hypotheses:", acc_negated_new)
+print("NEW Confusion matrix (negated):\n", cm_negated_new)
 
-labels = ["entailment", "neutral", "contradiction"]
-
-plt.figure(figsize=(6, 5))
-sns.heatmap(
-    cm_negated,
-    annot=True,
-    fmt="d",
-    cmap="Reds",
-    xticklabels=labels,
-    yticklabels=labels
-)
-plt.xlabel("Predicted Label")
-plt.ylabel("True Label")
-plt.title("Confusion Matrix: Negated Subset")
-plt.show()
-
-# Show first 10 misclassified examples
-misclassified_neg = []
-for i, row in enumerate(negated_subset):
-    if y_true_neg[i] != y_pred_neg[i]:
-        misclassified_neg.append({
-            "premise": row["premise"],
-            "hypothesis": row["hypothesis"],
-            "true_label": int(y_true_neg[i]),
-            "pred_label": int(y_pred_neg[i])
-        })
-
-print(f"Total misclassified (negated subset): {len(misclassified_neg)}\n")
-
-for example in misclassified_neg[:10]:
-    print("Premise: ", example["premise"])
-    print("Hypothesis: ", example["hypothesis"])
-    print("True label: ", example["true_label"])
-    print("Predicted label: ", example["pred_label"])
-    print("-" * 50)
-
-# =========================
-# 6. Evaluate on NON-NEGATED subset (comparison)
-# =========================
+# Evaluate on non-negated subset
 y_true_non = []
 y_pred_non = []
-
 for row in non_negated_subset:
     y_true_non.append(row["label"])
-    y_pred_non.append(predict_label(row["premise"], row["hypothesis"]))
+    y_pred_non.append(predict_label_new(row["premise"], row["hypothesis"]))
 
 y_true_non = np.array(y_true_non)
 y_pred_non = np.array(y_pred_non)
 
-acc_non_negated = accuracy_score(y_true_non, y_pred_non)
-cm_non_negated = confusion_matrix(y_true_non, y_pred_non, labels=[0, 1, 2])
+acc_non_negated_new = accuracy_score(y_true_non, y_pred_non)
+cm_non_negated_new = confusion_matrix(y_true_non, y_pred_non, labels=[0,1,2])
 
-print("Accuracy on non-negated hypotheses:", acc_non_negated)
-print("Confusion matrix (rows=true, cols=pred) for non-negated subset:\n", cm_non_negated)
-
-plt.figure(figsize=(6, 5))
-sns.heatmap(
-    cm_non_negated,
-    annot=True,
-    fmt="d",
-    cmap="Blues",
-    xticklabels=labels,
-    yticklabels=labels
-)
-plt.xlabel("Predicted Label")
-plt.ylabel("True Label")
-plt.title("Confusion Matrix: Non-Negated Subset")
-plt.show()
-
-# =========================
-# 7. Breakdown: how often predicted as CONTRADICTION
-# =========================
+print("NEW Accuracy on non-negated hypotheses:", acc_non_negated_new)
+print("NEW Confusion matrix (non-negated):\n", cm_non_negated_new)
+--------
 def breakdown_to_contradiction(y_true, y_pred, name: str):
     print(f"\n{name}: how often predicted as CONTRADICTION (label=2)")
-    for true_lbl, label_name in zip([0, 1, 2], ["entailment", "neutral", "contradiction"]):
+    for true_lbl, label_name in zip([0,1,2], ["entailment","neutral","contradiction"]):
         mask = (y_true == true_lbl)
         if mask.sum() == 0:
-            print(f"No examples with true label = {label_name}")
             continue
         total = mask.sum()
         pred_contra = ((y_pred == 2) & mask).sum()
-        print(
-            f"True {label_name}: {pred_contra}/{total} "
-            f"({pred_contra / total:.2%}) predicted as contradiction"
-        )
+        print(f"True {label_name}: {pred_contra}/{total} ({pred_contra/total:.2%})")
 
-breakdown_to_contradiction(y_true_neg, y_pred_neg, "Negated subset")
-breakdown_to_contradiction(y_true_non, y_pred_non, "Non-negated subset")
+breakdown_to_contradiction(y_true_neg, y_pred_neg, "Negated subset (NEW)")
+breakdown_to_contradiction(y_true_non, y_pred_non, "Non-negated subset (NEW)")
 
-# =========================
-# 8. (Optional) Minimal-pair probe for negation
-# =========================
-label_map = {0: "entailment", 1: "neutral", 2: "contradiction"}
-
-def show_minimal_pair(premise, hyp1, hyp2):
-    l1 = predict_label(premise, hyp1)
-    l2 = predict_label(premise, hyp2)
-    print("Premise:", premise)
-    print("Hyp 1:", hyp1, "->", label_map[l1])
-    print("Hyp 2:", hyp2, "->", label_map[l2])
-    print("-" * 50)
 
 show_minimal_pair(
     "A woman is laughing.",

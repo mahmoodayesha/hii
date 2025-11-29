@@ -1,297 +1,52 @@
-# -----------------------------
-# Part 2: Fixing the negation shortcut
-# Adversarial / contrast negation augmentation
-# -----------------------------
-
-from datasets import Dataset
-
-# We create a small set of hand-crafted contrast examples.
-# Label mapping: 0 = entailment, 1 = neutral, 2 = contradiction
-
-contrast_premises = [
-    "A woman is laughing.",
-    "A man is riding a bike.",
-    "A child is eating pizza.",
-    "A dog is sleeping on the couch.",
-    "Two people are talking in a room.",
-    "A person is running in the park.",
-    "A man is holding a cup of coffee.",
-    "A girl is reading a book.",
-    "A group of people are inside the building.",
-    "A boy is playing soccer outside."
-]
-
-contrast_hypotheses = [
-    # 1: negation flips truth -> contradiction
-    "The woman is laughing.",             # entailment
-    "The woman is not laughing.",         # contradiction
-
-    # 2: non-exclusive negation -> neutral (both can be true)
-    "The man is riding a bike.",          # entailment
-    "The man is not sleeping.",           # neutral
-
-    # 3: classic flip
-    "The child is eating pizza.",         # entailment
-    "The child is not eating pizza.",     # contradiction
-
-    # 4: classic flip
-    "The dog is sleeping on the couch.",  # entailment
-    "The dog is not sleeping on the couch.", # contradiction
-
-    # 5: negation about different action -> neutral
-    "Two people are talking in a room.",  # entailment
-    "The two people are not shouting.",   # neutral
-
-    # 6: classic flip
-    "A person is running in the park.",   # entailment
-    "The person is not running in the park.", # contradiction
-
-    # 7: classic flip
-    "The man is holding a cup of coffee.", # entailment
-    "The man is not holding a cup of coffee.", # contradiction
-
-    # 8: neutral with negation (extra fact)
-    "A girl is reading a book.",          # entailment
-    "The girl is not watching TV.",       # neutral
-
-    # 9: classic flip
-    "A group of people are inside the building.", # entailment
-    "The people are not outside the building.",   # contradiction
-
-    # 10: classic flip
-    "A boy is playing soccer outside.",  # entailment
-    "The boy is not playing soccer outside.", # contradiction
-]
-
-contrast_labels = [
-    0,  # woman laughing -> entailment
-    2,  # woman not laughing -> contradiction
-
-    0,  # man riding bike -> entailment
-    1,  # man not sleeping -> neutral
-
-    0,  # child eating pizza -> entailment
-    2,  # child not eating pizza -> contradiction
-
-    0,  # dog sleeping -> entailment
-    2,  # dog not sleeping -> contradiction
-
-    0,  # people talking -> entailment
-    1,  # people are not shouting -> neutral
-
-    0,  # person running -> entailment
-    2,  # person not running -> contradiction
-
-    0,  # man holding coffee -> entailment
-    2,  # man not holding coffee -> contradiction
-
-    0,  # girl reading -> entailment
-    1,  # girl is not watching TV -> neutral
-
-    0,  # people inside -> entailment
-    2,  # people not outside -> contradiction
-
-    0,  # boy playing soccer outside -> entailment
-    2,  # boy not playing soccer outside -> contradiction
-]
-
-# Align premises with hypotheses: each pair uses the same premise twice
-# Align premises with hypotheses: each pair uses the same premise twice
-expanded_premises = []
-for i, prem in enumerate(contrast_premises):
-    # each premise corresponds to 2 hypotheses in contrast_hypotheses
-    expanded_premises.append(prem)
-    expanded_premises.append(prem)
-
-print("Premises:", len(expanded_premises))
-print("Hyps:", len(contrast_hypotheses))
-print("Labels:", len(contrast_labels))
-
-# ✅ Create the HuggingFace dataset here
-contrast_dataset = Dataset.from_dict({
-    "premise": expanded_premises,
-    "hypothesis": contrast_hypotheses,
-    "label": contrast_labels,
-})
-
-print("Contrast dataset size:", len(contrast_dataset))
-print(contrast_dataset[0])
-
-
-
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, TrainingArguments, Trainer
-
-model_path = "./trained_model/"  # your already trained SNLI model
-tokenizer = AutoTokenizer.from_pretrained(model_path)
-model = AutoModelForSequenceClassification.from_pretrained(model_path)
-
-def tokenize_fn(batch):
-    return tokenizer(batch["premise"], batch["hypothesis"],
-                     truncation=True, padding="max_length", max_length=128)
-
-tokenized_contrast = contrast_dataset.map(tokenize_fn, batched=True)
-
-tokenized_contrast = tokenized_contrast.train_test_split(test_size=0.2, seed=42)
-contrast_train = tokenized_contrast["train"]
-contrast_eval = tokenized_contrast["test"]
-
-print("Train size:", len(contrast_train))
-print("Eval size:", len(contrast_eval))
-
-
-training_args = TrainingArguments(
-    output_dir="./trained_model_negation_fixed",
-    learning_rate=5e-5,
-    per_device_train_batch_size=8,
-    per_device_eval_batch_size=8,
-    num_train_epochs=10,   # small dataset, can do more epochs
-    weight_decay=0.01,
-    evaluation_strategy="epoch",
-    save_strategy="epoch",
-    logging_steps=10,
-    load_best_model_at_end=True,
-    metric_for_best_model="accuracy"
-)
-
-from sklearn.metrics import accuracy_score, f1_score
-import numpy as np
-
-def compute_metrics(eval_pred):
-    logits, labels = eval_pred
-    preds = np.argmax(logits, axis=-1)
-    acc = accuracy_score(labels, preds)
-    return {"accuracy": acc}
-
-trainer = Trainer(
-    model=model,
-    args=training_args,
-    train_dataset=contrast_train,
-    eval_dataset=contrast_eval,
-    tokenizer=tokenizer,
-    compute_metrics=compute_metrics,
-)
-
-trainer.train()
-
-# Save the updated model
-trainer.save_model("./trained_model_negation_fixed")
-tokenizer.save_pretrained("./trained_model_negation_fixed")
-
-print("Saved updated model to ./trained_model_negation_fixed")
-=======
-
-
-
-# -----------------------------
-# Re-run negation analysis with the updated model
-# -----------------------------
-from datasets import load_dataset
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
-import numpy as np
-from sklearn.metrics import accuracy_score, confusion_matrix
-
-snli = load_dataset("snli")
-test_set = snli["test"]
-test_set = test_set.filter(lambda x: x["label"] != -1)
-
-# same has_negation function you used before
-negation_words = [
-    "not", "never", "no", "none", "nothing",
-    "is not", "are not", "was not", "were not",
-    "does not", "do not", "did not",
-    "has not", "have not", "had not",
-    "cannot", "will not", "would not",
-    "should not", "could not",
-    "isn't", "aren't", "wasn't", "weren't",
-    "doesn't", "don't", "didn't",
-    "hasn't", "haven't", "hadn't",
-    "can't", "won't", "wouldn't", "shouldn't", "couldn't",
-    "nobody", "no one", "neither", "nowhere", "none of"
-]
-
-import re
-
-def has_negation(hypothesis):
-    hyp = hypothesis.lower()
-    for neg in negation_words:
-        if re.search(rf"\b{re.escape(neg)}\b", hyp):
-            return True
-    return False
-
-negated_subset = test_set.filter(lambda x: has_negation(x["hypothesis"]))
-non_negated_subset = test_set.filter(lambda x: not has_negation(x["hypothesis"]))
-
-print("Negated examples:", len(negated_subset))
-print("Non-negated examples:", len(non_negated_subset))
-
-# Load the updated model
-new_model_path = "./trained_model_negation_fixed"
-tokenizer_new = AutoTokenizer.from_pretrained(new_model_path)
-model_new = AutoModelForSequenceClassification.from_pretrained(new_model_path)
-model_new.to(device)
-model_new.eval()
-
-def predict_label_new(premise, hypothesis):
-    inputs = tokenizer_new(premise, hypothesis, return_tensors="pt",
-                           truncation=True, padding=True).to(device)
-    with torch.no_grad():
-        logits = model_new(**inputs).logits
-    return torch.argmax(logits, dim=-1).item()
-
-# Evaluate on negated subset
-y_true_neg = []
-y_pred_neg = []
-for row in negated_subset:
-    y_true_neg.append(row["label"])
-    y_pred_neg.append(predict_label_new(row["premise"], row["hypothesis"]))
-
-y_true_neg = np.array(y_true_neg)
-y_pred_neg = np.array(y_pred_neg)
-
-acc_negated_new = accuracy_score(y_true_neg, y_pred_neg)
-cm_negated_new = confusion_matrix(y_true_neg, y_pred_neg, labels=[0,1,2])
-
-print("NEW Accuracy on negated hypotheses:", acc_negated_new)
-print("NEW Confusion matrix (negated):\n", cm_negated_new)
-
-# Evaluate on non-negated subset
-y_true_non = []
-y_pred_non = []
-for row in non_negated_subset:
-    y_true_non.append(row["label"])
-    y_pred_non.append(predict_label_new(row["premise"], row["hypothesis"]))
-
-y_true_non = np.array(y_true_non)
-y_pred_non = np.array(y_pred_non)
-
-acc_non_negated_new = accuracy_score(y_true_non, y_pred_non)
-cm_non_negated_new = confusion_matrix(y_true_non, y_pred_non, labels=[0,1,2])
-
-print("NEW Accuracy on non-negated hypotheses:", acc_non_negated_new)
-print("NEW Confusion matrix (non-negated):\n", cm_non_negated_new)
---------
-def breakdown_to_contradiction(y_true, y_pred, name: str):
-    print(f"\n{name}: how often predicted as CONTRADICTION (label=2)")
-    for true_lbl, label_name in zip([0,1,2], ["entailment","neutral","contradiction"]):
-        mask = (y_true == true_lbl)
-        if mask.sum() == 0:
-            continue
-        total = mask.sum()
-        pred_contra = ((y_pred == 2) & mask).sum()
-        print(f"True {label_name}: {pred_contra}/{total} ({pred_contra/total:.2%})")
-
-breakdown_to_contradiction(y_true_neg, y_pred_neg, "Negated subset (NEW)")
-breakdown_to_contradiction(y_true_non, y_pred_non, "Non-negated subset (NEW)")
-
-
-show_minimal_pair(
-    "A woman is laughing.",
-    "The woman is laughing.",
-    "The woman is not laughing."
-)
-
-show_minimal_pair(
-    "A man is riding a bike.",
-    "The man is riding a bike.",
-    "The man is not sleeping."
-)
+Total misclassified (negated subset): 20
+
+Premise:  Many people standing outside of a place talking to each other in front of a building that has a sign that says "HI-POINTE."
+Hypothesis:  The group of people aren't inide of the building.
+True label:  0
+Predicted label:  2
+--------------------------------------------------
+Premise:  a boy in a red hooded top is smiling whilst looking away from his reflection.
+Hypothesis:  The boy doesn't want to see his reflection.
+True label:  1
+Predicted label:  0
+--------------------------------------------------
+Premise:  A very dirty race car doing a burnout on some dirt.
+Hypothesis:  A car that has no tires.
+True label:  2
+Predicted label:  1
+--------------------------------------------------
+Premise:  An Ambulance is passing a man wearing a bandanna and girl.
+Hypothesis:  The ambulance isn't stopped by heavy traffic
+True label:  0
+Predicted label:  1
+--------------------------------------------------
+Premise:  A fighter jet plane is landed outside Notre Dame cathedral at night.
+Hypothesis:  The fighter plane has no one inside of it.
+True label:  1
+Predicted label:  2
+--------------------------------------------------
+Premise:  The young boy in a red shirt and jeans resists his sister's request for water on the road.
+Hypothesis:  Kids don't share water.
+True label:  0
+Predicted label:  2
+--------------------------------------------------
+Premise:  A cheerful boy rides a makeshift sled down a snowy hill.
+Hypothesis:  Don't stock up and have fun with the sled
+True label:  2
+Predicted label:  1
+--------------------------------------------------
+Premise:  An Asian woman dressed in a colorful outfit laughing.
+Hypothesis:  The woman is not laughing.
+True label:  0
+Predicted label:  2
+--------------------------------------------------
+Premise:  A bald, black man wearing safety glasses and a long-sleeved black shirt is using a pick and hammer to sculpt a sizable rock into art.
+Hypothesis:  A black man with no hair is wearing his safety glasses around his neck.
+True label:  1
+Predicted label:  0
+--------------------------------------------------
+Premise:  There is a man poking a long stick up towards the ceiling.
+Hypothesis:  The man has no arms.
+True label:  1
+Predicted label:  2
+--------------------------------------------------

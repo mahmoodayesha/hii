@@ -1,0 +1,32 @@
+# =========================
+# 6. Evaluate on NON-NEGATED subset (comparison)
+# =========================
+y_true_non = []
+y_pred_non = []
+
+for row in non_negated_subset:
+    y_true_non.append(row["label"])
+    y_pred_non.append(predict_label(row["premise"], row["hypothesis"]))
+
+y_true_non = np.array(y_true_non)
+y_pred_non = np.array(y_pred_non)
+
+acc_non_negated = accuracy_score(y_true_non, y_pred_non)
+cm_non_negated = confusion_matrix(y_true_non, y_pred_non, labels=[0, 1, 2])
+
+print("Accuracy on non-negated hypotheses:", acc_non_negated)
+print("Confusion matrix (rows=true, cols=pred) for non-negated subset:\n", cm_non_negated)
+
+plt.figure(figsize=(6, 5))
+sns.heatmap(
+    cm_non_negated,
+    annot=True,
+    fmt="d",
+    cmap="Blues",
+    xticklabels=labels,
+    yticklabels=labels
+)
+plt.xlabel("Predicted Label")
+plt.ylabel("True Label")
+plt.title("Confusion Matrix: Non-Negated Subset")
+plt.show()
